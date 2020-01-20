@@ -1,13 +1,11 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
+
 pub enum ParameterType {
-    Int,
-    String,
+    Int(i32),
+    String(String),
 }
 
 pub struct Parameter {
-    pub int_value: i32,
-    pub str_value: String,
-    pub parameter_type: ParameterType,
+    pub value: Box<ParameterType>,
 }
 
 pub struct WhereClause {
@@ -23,9 +21,15 @@ pub enum QueryCondition {
     LesserEqual,
 }
 
+pub enum QueryOperator {
+    And,
+    Or,
+}
+
 pub struct Query {
     target_key: String,
     condition: QueryCondition,
+    operator: QueryOperator,
     parameter: Parameter,
 }
 
@@ -36,19 +40,23 @@ impl Query {
         Query {
             target_key: String::from(target),
             condition: cond,
+            operator: QueryOperator::And,
             parameter: Parameter {
-                int_value: param,
-                str_value: "".to_string(),
-                parameter_type: ParameterType::Int,
+                value: Box::new(ParameterType::Int(param)),
             },
         }
     }
 }
 
+pub struct Key {
+    name: String,
+    alias: String,
+}
 
 pub struct Table {
     name: String,
-    keys: Vec<String>,
+    keys: Vec<Key>,
+    placeholder: String,
 }
 
 impl Table {
@@ -56,12 +64,27 @@ impl Table {
         Table {
             name: String::from(name),
             keys: Vec::new(),
+            placeholder: "?".to_string(),
         }
     }
 
-    pub fn add_key(&mut self, key_name: &str) -> &mut Table {
-        self.keys.push(String::from(key_name));
+    pub fn add_key(&mut self, name: &str, alias: &str) -> &mut Table {
+        self.keys.push(Key {
+            name: String::from(name),
+            alias: String::from(alias),
+        });
         self
+    }
+
+    fn decode_cond(&self, key: &String, query: &Query) -> String {
+        let cond = match query.condition {
+            QueryCondition::Equals => "=",
+            QueryCondition::Greater => ">",
+            QueryCondition::Lesser => "<",
+            QueryCondition::GreaterEqual => ">=",
+            QueryCondition::LesserEqual => "<=",
+        };
+        format!("{} {} {}", key, cond, self.placeholder)
     }
 
     pub fn generate_where_clause(&self, queries: &Vec<Query>) -> Option<WhereClause> {
@@ -70,19 +93,15 @@ impl Table {
 
         // scan target key
         for q in queries {
-            if let Some(k) = self.keys.iter().find(|&x| x == &q.target_key) {
-                let cond = match q.condition {
-                    QueryCondition::Equals => "=",
-                    QueryCondition::Greater => ">",
-                    QueryCondition::Lesser => "<",
-                    QueryCondition::GreaterEqual => ">=",
-                    QueryCondition::LesserEqual => "<=",
-                };
-                clauses.push(format!("{} {} ?", k, cond));
+            if let Some(k) = self.keys.iter().find(|&x| x.name == q.target_key) {
+                clauses.push(self.decode_cond(&k.alias, q));
                 let param = Parameter {
-                    int_value: q.parameter.int_value,
-                    str_value: String::from(&q.parameter.str_value),
-                    parameter_type: q.parameter.parameter_type,
+                    value: match &*q.parameter.value {
+                        ParameterType::Int(x)
+                            => Box::new(ParameterType::Int(*x)),
+                        ParameterType::String(x)
+                            => Box::new(ParameterType::String(x.to_string())),
+                    },
                 };
                 parameters.push(param);
             } else {
